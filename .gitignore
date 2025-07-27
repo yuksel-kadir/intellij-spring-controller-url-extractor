@@ -1,0 +1,62 @@
+# IntelliJ project-specific files
+.idea/
+*.iml
+
+# Gradle build output
+/build/
+out/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Compiled class files
+*.class
+
+# Plugin distribution files
+*.jar
+*.zip
+
+# Gradle-specific
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+.gradle-cache/
+
+# JetBrains cache folders
+.idea_modules/
+.idea_workspace.xml
+.idea/libraries/
+.idea/modules.xml
+.idea/assetWizardSettings.xml
+.idea/usage.statistics.xml
+.idea/tasks.xml
+.idea/dictionaries/
+.idea/shelf/
+.idea/compiler.xml
+.idea/sonarlint/
+
+# IntelliJ run configurations
+.idea/runConfigurations/
+
+# Ignore build scans & logs
+.gradle/
+build/
+logs/
+
+# User-specific files
+*.iws
+*.ipr
+*.swp
+*.bak
+*.tmp
+*.orig
+*.rej
+
+# VSCode (if used for editing)
+.vscode/
+
+# Plugin sandbox (runtime sandbox)
+sandbox/

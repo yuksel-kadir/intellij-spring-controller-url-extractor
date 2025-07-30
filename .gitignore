@@ -37,6 +37,7 @@ Thumbs.db
 .idea/shelf/
 .idea/compiler.xml
 .idea/sonarlint/
+.intellijPlatform
 
 # IntelliJ run configurations
 .idea/runConfigurations/

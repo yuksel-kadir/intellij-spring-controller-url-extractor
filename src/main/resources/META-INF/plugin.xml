@@ -1,40 +1,49 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <idea-plugin>
-  <id>com.springurlextractor</id>
-  <name>Spring URL Extractor</name>
-  <version>1.0.0</version>
-  <vendor email="your.email@example.com" url="https://example.com">Your Name</vendor>
+    <id>com.springurlextractor</id>
+    <name>Spring URL Extractor</name>
+    <version>1.1.0</version>
+    <vendor email="" url="https://github.com/yuksel-kadir/">Kadir Yüksel</vendor>
 
-  <description><![CDATA[
-    Extract complete URLs from Spring controllers including context path from application.yml/properties files.
+    <description><![CDATA[
+    Extract complete URLs from Spring controllers and generate cURL commands including context path from application.yml/properties files.
     <br/>
     <br/>
     Features:
     <ul>
         <li>Right-click on controller methods to get full URL</li>
+        <li>Generate cURL commands with path variables, request parameters, and request body</li>
         <li>Automatically detects context path from configuration files</li>
         <li>Supports both @RequestMapping and shorthand annotations</li>
         <li>Works with application.yml and application.properties</li>
-        <li>Keyboard shortcut: Ctrl+Alt+U</li>
+        <li>Keyboard shortcuts: Ctrl+Alt+U (URL), Ctrl+Alt+C (cURL)</li>
     </ul>
     ]]></description>
 
-  <!-- Minimum and maximum IDE versions -->
-  <idea-version since-build="251" until-build="252.*"/>
+    <!-- Minimum and maximum IDE versions -->
+    <idea-version since-build="251" until-build="252.*"/>
 
-  <!-- Plugin dependencies -->
-  <depends>com.intellij.modules.platform</depends>
-  <depends>com.intellij.modules.java</depends>
-  <depends>com.intellij.java</depends>
-  <depends>org.jetbrains.plugins.yaml</depends>
+    <!-- Plugin dependencies -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>com.intellij.java</depends>
+    <depends>org.jetbrains.plugins.yaml</depends>
 
-  <actions>
-    <action id="ExtractSpringUrl"
-            class="com.springurlextractor.ExtractUrlAction"
-            text="Extract Spring URL"
-            description="Extract complete URL including context path">
-      <add-to-group group-id="EditorPopupMenu" anchor="first"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt U"/>
-    </action>
-  </actions>
+    <actions>
+        <action id="ExtractSpringUrl"
+                class="com.springurlextractor.ExtractUrlAction"
+                text="Extract Spring URL"
+                description="Extract complete URL including context path">
+            <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt U"/>
+        </action>
+
+        <action id="GenerateSpringCurl"
+                class="com.springurlextractor.CurlGeneratorAction"
+                text="Generate cURL Command"
+                description="Generate cURL command with path variables, request parameters, and body">
+            <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="ExtractSpringUrl"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt C"/>
+        </action>
+    </actions>
 </idea-plugin>

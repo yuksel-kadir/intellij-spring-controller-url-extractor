@@ -1,13 +1,19 @@
 package com.springurlextractor;
 
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,7 +29,7 @@ public class SpringUrlExtractor {
     }
 
     public String extractUrl(PsiMethod method) {
-        String contextPath = getContextPath();
+        String contextPath = getContextPath(method);
         String controllerPath = getControllerBasePath(method.getContainingClass());
         String methodPath = getMethodPath(method);
 
@@ -32,26 +38,48 @@ public class SpringUrlExtractor {
         }
 
         String fullPath = buildFullPath(contextPath, controllerPath, methodPath);
-        String serverUrl = getServerUrl();
+        String serverUrl = getServerUrl(method);
 
         return serverUrl + fullPath;
     }
 
-    private String getContextPath() {
+    private GlobalSearchScope getSearchScope(PsiMethod method) {
+        // Get the module that contains this method
+        Module module = ModuleUtilCore.findModuleForPsiElement(method);
+
+        if (module != null) {
+            // Create scope for this specific module only, including test sources
+            GlobalSearchScope moduleScope = GlobalSearchScope.moduleScope(module);
+
+            // Also create a scope that includes dependencies but restrict it to the same project
+            GlobalSearchScope moduleWithDepsScope = GlobalSearchScope.moduleWithDependenciesScope(module);
+
+            // Intersect with project scope to ensure we don't leak into other projects
+            GlobalSearchScope projectScope = GlobalSearchScope.projectScope(method.getProject());
+            GlobalSearchScope restrictedScope = moduleWithDepsScope.intersectWith(projectScope);
+
+            return restrictedScope;
+        }
+
+        // Fallback to project scope if we can't determine the module
+        return GlobalSearchScope.projectScope(method.getProject());
+    }
+
+    private String getContextPath(PsiMethod method) {
         // Try YAML files first
-        String contextPath = getContextPathFromYaml();
+        String contextPath = getContextPathFromYaml(method);
         if (contextPath != null) {
             return contextPath;
         }
 
         // Fall back to properties files
-        return getContextPathFromProperties();
+        return getContextPathFromProperties(method);
     }
 
-    private String getServerUrl() {
-        String host = getServerHost();
-        String port = getServerPort();
-        String protocol = getServerProtocol();
+    private String getServerUrl(PsiMethod method) {
+        String host = getServerHost(method);
+        String port = getServerPort(method);
+        String protocol = getServerProtocol(method);
 
         // Default values
         if (host == null || host.isEmpty()) {
@@ -73,35 +101,35 @@ public class SpringUrlExtractor {
         return protocol + "://" + host + ":" + port;
     }
 
-    private String getServerHost() {
+    private String getServerHost(PsiMethod method) {
         // Try YAML first
-        String host = getServerPropertyFromYaml("address");
+        String host = getServerPropertyFromYaml(method, "address");
         if (host != null) {
             return host;
         }
 
         // Try properties
-        host = getServerPropertyFromProperties("server.address");
+        host = getServerPropertyFromProperties(method, "server.address");
         return host;
     }
 
-    private String getServerPort() {
+    private String getServerPort(PsiMethod method) {
         // Try YAML first
-        String port = getServerPropertyFromYaml("port");
+        String port = getServerPropertyFromYaml(method, "port");
         if (port != null) {
             return port;
         }
 
         // Try properties
-        port = getServerPropertyFromProperties("server.port");
+        port = getServerPropertyFromProperties(method, "server.port");
         return port;
     }
 
-    private String getServerProtocol() {
+    private String getServerProtocol(PsiMethod method) {
         // Check for SSL configuration
-        String sslEnabled = getServerPropertyFromYaml("ssl", "enabled");
+        String sslEnabled = getServerPropertyFromYaml(method, "ssl", "enabled");
         if (sslEnabled == null) {
-            sslEnabled = getServerPropertyFromProperties("server.ssl.enabled");
+            sslEnabled = getServerPropertyFromProperties(method, "server.ssl.enabled");
         }
 
         if ("true".equalsIgnoreCase(sslEnabled)) {
@@ -111,25 +139,65 @@ public class SpringUrlExtractor {
         return "http";
     }
 
-    private String getContextPathFromYaml() {
-        // Search for application.yml files
+    private String getContextPathFromYaml(PsiMethod method) {
+        GlobalSearchScope searchScope = getSearchScope(method);
+
+        // Debug: Log the project and module info
+        Module module = ModuleUtilCore.findModuleForPsiElement(method);
+        System.out.println("DEBUG - Method project: " + method.getProject().getName());
+        System.out.println("DEBUG - Method module: " + (module != null ? module.getName() : "null"));
+        System.out.println("DEBUG - Extractor project: " + this.project.getName());
+
+        // Search for application.yml files in the specific scope
         Collection<VirtualFile> yamlFiles = FilenameIndex.getVirtualFilesByName(
-                "application.yml", GlobalSearchScope.projectScope(project));
+                "application.yml", searchScope);
 
         if (yamlFiles.isEmpty()) {
             yamlFiles = FilenameIndex.getVirtualFilesByName(
-                    "application.yaml", GlobalSearchScope.projectScope(project));
+                    "application.yaml", searchScope);
         }
 
+        // Also look for profile-specific files
+        if (yamlFiles.isEmpty()) {
+            // Look for any application-*.yml files
+            Collection<VirtualFile> allYamlFiles = new ArrayList<>();
+
+            // Search for common profile-specific files
+            String[] profileFiles = {
+                    "application-dev.yml", "application-test.yml", "application-prod.yml",
+                    "application-dev.yaml", "application-test.yaml", "application-prod.yaml",
+                    "application-local.yml", "application-local.yaml"
+            };
+
+            for (String filename : profileFiles) {
+                Collection<VirtualFile> profileYamlFiles = FilenameIndex.getVirtualFilesByName(
+                        filename, searchScope);
+                allYamlFiles.addAll(profileYamlFiles);
+            }
+
+            yamlFiles.addAll(allYamlFiles);
+        }
+
+        System.out.println("DEBUG - Found " + yamlFiles.size() + " YAML files");
+
         for (VirtualFile file : yamlFiles) {
-            try {
-                String content = new String(file.contentsToByteArray(), file.getCharset());
-                String contextPath = extractContextPathFromYamlText(content);
-                if (contextPath != null) {
-                    return contextPath;
+            System.out.println("DEBUG - Checking file: " + file.getPath());
+            // Verify this file is actually in our module's source roots
+            if (isFileInModuleSourceRoots(file, method)) {
+                System.out.println("DEBUG - File validated: " + file.getPath());
+                try {
+                    String content = new String(file.contentsToByteArray(), file.getCharset());
+                    String contextPath = extractContextPathFromYamlText(content);
+                    if (contextPath != null) {
+                        System.out.println("DEBUG - Found context path: " + contextPath);
+                        return contextPath;
+                    }
+                } catch (IOException e) {
+                    System.out.println("DEBUG - Error reading file: " + e.getMessage());
+                    // Continue to next file
                 }
-            } catch (IOException e) {
-                // Continue to next file
+            } else {
+                System.out.println("DEBUG - File rejected: " + file.getPath());
             }
         }
         return null;
@@ -139,30 +207,156 @@ public class SpringUrlExtractor {
         return extractYamlProperty(yamlContent, "server", "servlet", "context-path");
     }
 
-    private String getServerPropertyFromYaml(String... propertyPath) {
+    private String getServerPropertyFromYaml(PsiMethod method, String... propertyPath) {
+        GlobalSearchScope searchScope = getSearchScope(method);
+
         Collection<VirtualFile> yamlFiles = FilenameIndex.getVirtualFilesByName(
-                "application.yml", GlobalSearchScope.projectScope(project));
+                "application.yml", searchScope);
 
         if (yamlFiles.isEmpty()) {
             yamlFiles = FilenameIndex.getVirtualFilesByName(
-                    "application.yaml", GlobalSearchScope.projectScope(project));
+                    "application.yaml", searchScope);
+        }
+
+        // Also look for profile-specific files
+        if (yamlFiles.isEmpty()) {
+            // Look for any application-*.yml files
+            Collection<VirtualFile> allYamlFiles = new ArrayList<>();
+
+            // Search for common profile-specific files
+            String[] profileFiles = {
+                    "application-dev.yml", "application-test.yml", "application-prod.yml",
+                    "application-dev.yaml", "application-test.yaml", "application-prod.yaml",
+                    "application-local.yml", "application-local.yaml"
+            };
+
+            for (String filename : profileFiles) {
+                Collection<VirtualFile> profileYamlFiles = FilenameIndex.getVirtualFilesByName(
+                        filename, searchScope);
+                allYamlFiles.addAll(profileYamlFiles);
+            }
+
+            yamlFiles.addAll(allYamlFiles);
         }
 
         for (VirtualFile file : yamlFiles) {
-            try {
-                String content = new String(file.contentsToByteArray(), file.getCharset());
-                String[] fullPath = new String[propertyPath.length + 1];
-                fullPath[0] = "server";
-                System.arraycopy(propertyPath, 0, fullPath, 1, propertyPath.length);
-                String value = extractYamlProperty(content, fullPath);
-                if (value != null) {
-                    return value;
+            // Verify this file is actually in our module's source roots
+            if (isFileInModuleSourceRoots(file, method)) {
+                try {
+                    String content = new String(file.contentsToByteArray(), file.getCharset());
+                    String[] fullPath = new String[propertyPath.length + 1];
+                    fullPath[0] = "server";
+                    System.arraycopy(propertyPath, 0, fullPath, 1, propertyPath.length);
+                    String value = extractYamlProperty(content, fullPath);
+                    if (value != null) {
+                        return value;
+                    }
+                } catch (IOException e) {
+                    // Continue to next file
                 }
-            } catch (IOException e) {
-                // Continue to next file
             }
         }
         return null;
+    }
+
+    private String getServerPropertyFromProperties(PsiMethod method, String propertyName) {
+        GlobalSearchScope searchScope = getSearchScope(method);
+
+        Collection<VirtualFile> propFiles = FilenameIndex.getVirtualFilesByName(
+                "application.properties", searchScope);
+
+        // Also look for profile-specific files
+        Collection<VirtualFile> allPropFiles = new ArrayList<>();
+
+        // Search for common profile-specific property files
+        String[] profileFiles = {
+                "application-dev.properties", "application-test.properties", "application-prod.properties",
+                "application-local.properties"
+        };
+
+        for (String filename : profileFiles) {
+            Collection<VirtualFile> profilePropFiles = FilenameIndex.getVirtualFilesByName(
+                    filename, searchScope);
+            allPropFiles.addAll(profilePropFiles);
+        }
+
+        propFiles.addAll(allPropFiles);
+
+        for (VirtualFile file : propFiles) {
+            // Verify this file is actually in our module's source roots
+            if (isFileInModuleSourceRoots(file, method)) {
+                try {
+                    String content = new String(file.contentsToByteArray(), file.getCharset());
+                    String value = extractPropertyFromPropertiesContent(content, propertyName);
+                    if (value != null) {
+                        return value;
+                    }
+                } catch (IOException e) {
+                    // Continue to next file
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isFileInModuleSourceRoots(VirtualFile file, PsiMethod method) {
+        Module module = ModuleUtilCore.findModuleForPsiElement(method);
+        if (module == null) {
+            return false; // If we can't determine the module, be more restrictive
+        }
+
+        // Double-check that the file belongs to the same project
+        Project methodProject = method.getProject();
+        if (!methodProject.equals(this.project)) {
+            return false;
+        }
+
+        ModuleRootManager rootManager = ModuleRootManager.getInstance(module);
+        VirtualFile[] sourceRoots = rootManager.getSourceRoots();
+        VirtualFile[] contentRoots = rootManager.getContentRoots();
+
+        // Check if the file is under any source root
+        for (VirtualFile sourceRoot : sourceRoots) {
+            if (isUnder(file, sourceRoot)) {
+                // Additional check: make sure the source root belongs to the same project
+                if (isFileInProject(sourceRoot, methodProject)) {
+                    return true;
+                }
+            }
+        }
+
+        // Also check content roots (for files in src/main/resources, etc.)
+        for (VirtualFile contentRoot : contentRoots) {
+            if (isUnder(file, contentRoot)) {
+                // Additional check: make sure the content root belongs to the same project
+                if (isFileInProject(contentRoot, methodProject)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private boolean isFileInProject(VirtualFile file, Project targetProject) {
+        try {
+            PsiManager psiManager = PsiManager.getInstance(targetProject);
+            PsiFile psiFile = psiManager.findFile(file);
+            return psiFile != null && psiFile.getProject().equals(targetProject);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isUnder(VirtualFile file, VirtualFile ancestor) {
+        VirtualFile current = file;
+        while (current != null) {
+            if (current.equals(ancestor)) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private String extractYamlProperty(String yamlContent, String... propertyPath) {
@@ -251,24 +445,6 @@ public class SpringUrlExtractor {
         return null;
     }
 
-    private String getServerPropertyFromProperties(String propertyName) {
-        Collection<VirtualFile> propFiles = FilenameIndex.getVirtualFilesByName(
-                "application.properties", GlobalSearchScope.projectScope(project));
-
-        for (VirtualFile file : propFiles) {
-            try {
-                String content = new String(file.contentsToByteArray(), file.getCharset());
-                String value = extractPropertyFromPropertiesContent(content, propertyName);
-                if (value != null) {
-                    return value;
-                }
-            } catch (IOException e) {
-                // Continue to next file
-            }
-        }
-        return null;
-    }
-
     private String extractPropertyFromPropertiesContent(String content, String propertyName) {
         Pattern pattern = Pattern.compile("^\\s*" + Pattern.quote(propertyName) + "\\s*=\\s*(.+)$", Pattern.MULTILINE);
         Matcher matcher = pattern.matcher(content);
@@ -278,10 +454,12 @@ public class SpringUrlExtractor {
         return null;
     }
 
-    private String getContextPathFromProperties() {
-        return getServerPropertyFromProperties("server.servlet.context-path") != null ?
-                getServerPropertyFromProperties("server.servlet.context-path") :
-                getServerPropertyFromProperties("server.context-path");
+    private String getContextPathFromProperties(PsiMethod method) {
+        String contextPath = getServerPropertyFromProperties(method, "server.servlet.context-path");
+        if (contextPath != null) {
+            return contextPath;
+        }
+        return getServerPropertyFromProperties(method, "server.context-path");
     }
 
     private String getControllerBasePath(PsiClass controllerClass) {
